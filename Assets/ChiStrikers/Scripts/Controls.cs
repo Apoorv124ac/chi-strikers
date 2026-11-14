@@ -95,6 +95,8 @@ namespace ChiStrikers
         }
         public string PadFor(int role) => role == 4 ? "A" : role == 3 ? "B" : role == 2 ? "X" : role == 1 ? "Y" : "";
         public bool HasPad => Pad != null;
+        /// <summary>Tutorial: skip the current drill.</summary>
+        public bool SkipDown => (Slot == 0 && Down(Key.Tab)) || (Pad != null && Pad.selectButton.wasPressedThisFrame);
 
         public bool SwitchDown => LobDown || (Pad != null && Pad.leftShoulder.wasPressedThisFrame);
 

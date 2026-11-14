@@ -17,6 +17,7 @@ The look follows a clean 2D sports-cartoon style: flat two-tone colours, dark in
 The title screen plays a CPU-vs-CPU match in the background.
 
 - **Play vs CPU:** you are Mohalla United.
+- **Tutorial:** 9 short guided drills on the real pitch (marked NEW until you finish it once; the menu starts on it the first time). Each drill shows a coach card with the keys to press, a yellow ring or a bouncing arrow over the teammate to use, and "NICE!" when you get it: move, sprint, pass, direct pass, through ball, shoot, tackle, Agni Strike and Akhada Wall. Tab (or Back on a pad) skips a drill, Esc opens the menu. At the end, Enter starts a match vs CPU.
 - **2 Players: Versus:** Player 1 is Mohalla United, Player 2 is Titan FC.
 - **2 Players: Co-op vs CPU:** both players on Mohalla United.
 
@@ -68,6 +69,7 @@ Assets/ChiStrikers/
   Scripts/
     Match.cs     entry point: builds everything, match flow, human control, ball contacts, saves
     Player.cs    movement, dribbling, passes, shots, tackles, Chi
+    Tutorial.cs  the guided drills: setups, success checks, retries
     Brain.cs     CPU players: formation, pressing, passing, shooting, specials, goalkeeping
     Specials.cs  the special-move cinematics
     Ball.cs      ball physics (boards, posts, crossbar, net), curve and specials; Pitch sizes
@@ -75,7 +77,7 @@ Assets/ChiStrikers/
     Arena.cs     glossy court, lines, goals and nets, ad boards, stands and crowd, LED scoreboard
     Fx.cs        particles, shockwave rings, floor cracks, after-images, golden hands, ball auras
     CameraRig.cs side-on pan camera, special close-ups, ball follow, shake
-    HUD.cs       scoreboard, Chi cards, banners, kinetic special titles, title / pause / help screens
+    HUD.cs       scoreboard, Chi cards, banners, kinetic special titles, tutorial coach card, title / pause / help screens
     Defs.cs      teams, heroes, kits and specials
     Controls.cs  keyboard + gamepad input (Input System)
     Sfx.cs       synthesised sounds (kicks, whistle, crowd, booms)

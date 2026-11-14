@@ -66,9 +66,10 @@ namespace ChiStrikers
 
             if (M.State == MatchState.Title) { Title(W, H); Flash(W, H); return; }
 
-            Scoreboard(W);
-            ChiCards(W, H);
+            bool tut = M.Mode == GameMode.Tutorial;
+            if (!tut) { Scoreboard(W); ChiCards(W, H); }
             Markers();
+            if (tut) Coach(W, H);
             Banners(W, H);
             SpecialTitle(W, H);
             if (M.ToastT > 0 && !string.IsNullOrEmpty(M.Toast))
@@ -287,6 +288,128 @@ namespace ChiStrikers
             Text(new Rect(-slide * W * 0.3f, cy + 34 * s, W, 40 * s), sp.Sub, 26, new Color(Yellow.r, Yellow.g, Yellow.b, alpha), TextAnchor.MiddleCenter, FontStyle.Bold, 2);
         }
 
+        // ---------------------------------------------------------------- tutorial
+        /// <summary>Coach card, progress dots, arrow over the target player and the "NICE!" pop, mobile-football style.</summary>
+        void Coach(float W, float H)
+        {
+            var t = M.Tut;
+            if (t == null || t.Step < 0 || M.Paused) return;
+
+            if (t.Done) { CoachComplete(W, H, t); return; }
+
+            // slide-in card at the top centre
+            float k = Mathf.Clamp01(t.StepT / 0.25f);
+            float ease = 1 - (1 - k) * (1 - k);
+            float w = 900 * s, h = 196 * s;
+            var r = new Rect(W * 0.5f - w * 0.5f, 18 * s - (1 - ease) * 240 * s, w, h);
+            Box(new Rect(r.x + 8 * s, r.y + 8 * s, r.width, r.height), new Color(0, 0, 0, 0.35f));
+            Box(r, new Color(Navy.r, Navy.g, Navy.b, 0.94f));
+            Box(new Rect(r.x, r.y, 10 * s, r.height), Yellow);
+            Box(new Rect(r.x, r.yMax - 5 * s, r.width, 5 * s), Orange);
+
+            Text(new Rect(r.x + 32 * s, r.y + 10 * s, 400 * s, 30 * s), $"TUTORIAL  {t.Step + 1} / {Tutorial.Count}", 20, Yellow, TextAnchor.MiddleLeft, FontStyle.Bold);
+            Text(new Rect(r.x + 32 * s, r.y + 36 * s, w - 64 * s, 56 * s), t.Title, 46, Color.white, TextAnchor.MiddleLeft, FontStyle.BoldAndItalic, 2);
+            style.wordWrap = true;
+            Text(new Rect(r.x + 32 * s, r.y + 92 * s, w - 64 * s, 56 * s), t.Body, 20, new Color(0.85f, 0.9f, 1f), TextAnchor.UpperLeft, FontStyle.Normal);
+            style.wordWrap = false;
+
+            // key badges
+            float bx = r.x + 32 * s, by = r.yMax - 48 * s;
+            foreach (var key in t.Keys)
+            {
+                style.fontSize = Mathf.Max(8, (int)(20 * s)); style.fontStyle = FontStyle.Bold;
+                float bw = style.CalcSize(new GUIContent(key)).x + 28 * s;
+                var b = new Rect(bx, by, bw, 34 * s);
+                Box(new Rect(b.x, b.y + 4 * s, b.width, b.height), Orange);
+                Box(b, Yellow);
+                Text(b, key, 20, Navy, TextAnchor.MiddleCenter, FontStyle.Bold);
+                bx += bw + 14 * s;
+            }
+
+            // progress dots
+            float dot = 14 * s, gap = 10 * s, total = Tutorial.Count * dot + (Tutorial.Count - 1) * gap;
+            float dx = r.xMax - total - 28 * s, dy = r.y + 18 * s;
+            for (int i = 0; i < Tutorial.Count; i++)
+            {
+                var c = i < t.Step || (i == t.Step && t.SuccessT >= 0) ? Yellow : i == t.Step ? Color.white : new Color(1, 1, 1, 0.22f);
+                Box(new Rect(dx + i * (dot + gap), dy, dot, dot), c);
+            }
+
+            // bouncing arrow over the player the drill is about
+            var cam = M.Cam ? M.Cam.Cam : null;
+            if (t.Highlight != null && cam && t.SuccessT < 0 && !M.Cinematic)
+            {
+                var p = t.Highlight;
+                var sp = cam.WorldToScreenPoint(p.Pos + Vector3.up * (2.05f * p.Def.Look.Height + p.Lift));
+                if (sp.z > 0)
+                {
+                    float x = sp.x, y = H - sp.y - 64 * s - Mathf.Abs(Mathf.Sin(Time.unscaledTime * 5f)) * 18 * s;
+                    Arrow(x, y, 26 * s, Yellow);
+                    if (!string.IsNullOrEmpty(t.HighlightLabel))
+                    {
+                        style.fontSize = Mathf.Max(8, (int)(18 * s)); style.fontStyle = FontStyle.BoldAndItalic;
+                        float lw = style.CalcSize(new GUIContent(t.HighlightLabel)).x + 24 * s;
+                        var lr = new Rect(x - lw * 0.5f, y - 66 * s, lw, 30 * s);
+                        Box(lr, Navy);
+                        Box(new Rect(lr.x, lr.yMax - 3 * s, lr.width, 3 * s), Yellow);
+                        Text(lr, t.HighlightLabel, 18, Yellow, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic);
+                    }
+                }
+            }
+
+            // NICE! pop on success
+            if (t.SuccessT >= 0)
+            {
+                float st = t.SuccessT;
+                float pk = Mathf.Clamp01(st / 0.18f);
+                float scale = Mathf.Lerp(2.4f, 1f, 1 - (1 - pk) * (1 - pk));
+                float alpha = st > 1.1f ? Mathf.Clamp01(1 - (st - 1.1f) / 0.3f) : 1f;
+                var mtx = GUI.matrix;
+                GUIUtility.ScaleAroundPivot(new Vector2(scale, scale), new Vector2(W * 0.5f, H * 0.45f));
+                string word = t.Step == 5 || t.Step == 7 ? "GOAL!" : t.Step == 8 ? "WALL!" : t.Tries > 0 ? "GOT IT!" : "NICE!";
+                Text(new Rect(0, H * 0.45f - 80 * s, W, 160 * s), word, 120, new Color(Yellow.r, Yellow.g, Yellow.b, alpha), TextAnchor.MiddleCenter, FontStyle.BoldAndItalic, 6, new Color(Ink.r, Ink.g, Ink.b, alpha));
+                GUI.matrix = mtx;
+                if (st > 0.15f) Text(new Rect(0, H * 0.45f + 70 * s, W, 40 * s), t.Step + 1 < Tutorial.Count ? "Next drill..." : "Tutorial done!", 26, new Color(1, 1, 1, alpha), TextAnchor.MiddleCenter, FontStyle.Bold, 2);
+            }
+
+            // footer
+            Text(new Rect(0, H - 46 * s, W, 34 * s), M.P1.HasPad ? "Back / Select: skip drill   ·   Start: menu" : "Tab: skip drill   ·   Esc: menu", 20, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
+        }
+
+        void Arrow(float x, float y, float size, Color c)
+        {
+            // a stack of shrinking bars makes a downward-pointing triangle
+            Box(new Rect(x - size * 0.28f, y - size * 1.3f, size * 0.56f, size * 0.9f), c);
+            int rows = 10;
+            for (int i = 0; i < rows; i++)
+            {
+                float f = 1 - i / (float)rows;
+                float rw = size * 2f * f, rh = size / rows + 1;
+                Box(new Rect(x - rw * 0.5f, y - size * 0.4f + i * (size / rows), rw, rh), c);
+            }
+        }
+
+        void CoachComplete(float W, float H, Tutorial t)
+        {
+            float k = Mathf.Clamp01(t.StepT / 0.3f);
+            Box(new Rect(0, H * 0.28f, W, H * 0.44f * k), new Color(Navy.r, Navy.g, Navy.b, 0.9f));
+            if (k < 1) return;
+            Box(new Rect(0, H * 0.28f, W, 6 * s), Yellow);
+            Box(new Rect(0, H * 0.72f - 6 * s, W, 6 * s), Yellow);
+            Text(new Rect(0, H * 0.31f, W, 120 * s), t.Title, 88, Yellow, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic, 5);
+            float dot = 22 * s, gap = 14 * s, total = Tutorial.Count * dot + (Tutorial.Count - 1) * gap;
+            for (int i = 0; i < Tutorial.Count; i++) Box(new Rect(W * 0.5f - total * 0.5f + i * (dot + gap), H * 0.31f + 130 * s, dot, dot), Yellow);
+            Text(new Rect(0, H * 0.31f + 170 * s, W, 50 * s), t.Body, 26, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
+            float bx = W * 0.5f - 380 * s;
+            for (int i = 0; i < t.Keys.Length; i++)
+            {
+                var b = new Rect(bx + i * 400 * s, H * 0.31f + 240 * s, 360 * s, 54 * s);
+                Box(new Rect(b.x, b.y + 5 * s, b.width, b.height), Orange);
+                Box(b, i == 0 ? Yellow : Color.white);
+                Text(b, t.Keys[i], 24, Navy, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic);
+            }
+        }
+
         // ---------------------------------------------------------------- menus
         void Logo(float W, float y, float size)
         {
@@ -303,8 +426,8 @@ namespace ChiStrikers
 
             if (M.ShowHelp) { Help(W, H); return; }
 
-            string[] items = { "PLAY vs CPU", "2 PLAYERS: VERSUS", "2 PLAYERS: CO-OP vs CPU", "<  DIFFICULTY: " + Skill.For(M.Difficulty).Name + "  >", "HOW TO PLAY" };
-            float iw = 560 * s, ih = 62 * s, y0 = H * 0.47f;
+            string[] items = { "PLAY vs CPU", "TUTORIAL", "2 PLAYERS: VERSUS", "2 PLAYERS: CO-OP vs CPU", "<  DIFFICULTY: " + Skill.For(M.Difficulty).Name + "  >", "HOW TO PLAY" };
+            float iw = 560 * s, ih = 56 * s, y0 = H * 0.44f;
             for (int i = 0; i < items.Length; i++)
             {
                 bool sel = i == M.MenuIndex;
@@ -314,6 +437,14 @@ namespace ChiStrikers
                 Box(r, sel ? Yellow : new Color(Navy.r, Navy.g, Navy.b, 0.9f));
                 if (sel) Box(new Rect(r.x, r.yMax - 6 * s, r.width, 6 * s), Orange);
                 Text(r, items[i], 32, sel ? Navy : Color.white, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic);
+                if (i == 1 && M.TutorialNew)
+                {
+                    // "NEW" sticker, like the badges on mobile game menus
+                    var b = new Rect(r.xMax - 92 * s, r.y - 12 * s, 84 * s, 32 * s);
+                    bool blink = Mathf.Repeat(Time.unscaledTime * 1.5f, 1f) < 0.7f;
+                    Box(b, blink ? Util.Hex("#e0352b") : Orange);
+                    Text(b, "NEW", 20, Color.white, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic);
+                }
             }
             Text(new Rect(0, H - 70 * s, W, 40 * s), "Click, or W / S and Enter, or D-pad and A  ·  click the Game view first so it gets the keyboard", 22, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
             Text(new Rect(10 * s, H - 34 * s, 600 * s, 30 * s), "Input: " + Controls.Status, 16, Controls.Status == "NO INPUT" ? Util.Hex("#e0352b") : Sky, TextAnchor.MiddleLeft, FontStyle.Normal);
@@ -354,7 +485,7 @@ namespace ChiStrikers
         {
             Box(new Rect(0, 0, W, H), new Color(Navy.r, Navy.g, Navy.b, 0.7f));
             Logo(W, H * 0.14f, 90);
-            string[] items = { "RESUME", "RESTART MATCH", "QUIT TO TITLE" };
+            string[] items = { "RESUME", M.Mode == GameMode.Tutorial ? "RESTART TUTORIAL" : "RESTART MATCH", "QUIT TO TITLE" };
             float iw = 480 * s, ih = 64 * s, y0 = H * 0.4f;
             for (int i = 0; i < items.Length; i++)
             {

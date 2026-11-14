@@ -4,7 +4,7 @@ using UnityEngine;
 namespace ChiStrikers
 {
     public enum MatchState { Title, Kickoff, Playing, Goal, HalfTime, FullTime }
-    public enum GameMode { Demo, VsCpu, Versus, Coop }
+    public enum GameMode { Demo, VsCpu, Versus, Coop, Tutorial }
 
     public sealed class Team
     {
@@ -61,6 +61,9 @@ namespace ChiStrikers
         public readonly Controls P1 = new Controls(0), P2 = new Controls(1);
         public int MenuIndex, PauseIndex;
         public bool ShowHelp;
+        public Tutorial Tut;
+        public bool LastPassThrough;
+        public bool TutorialNew => PlayerPrefs.GetInt(Tutorial.PrefKey, 0) == 0;
 
         void Awake()
         {
@@ -73,6 +76,7 @@ namespace ChiStrikers
             Cam = CameraRig.Create(this);
             Ball = Ball.Create(this);
             Specials = new Specials(this);
+            Tut = new Tutorial(this);
             Hud = gameObject.AddComponent<HUD>();
             Hud.M = this;
 
@@ -89,20 +93,29 @@ namespace ChiStrikers
         // ------------------------------------------------------------------ flow
         public void GoToTitle()
         {
+            if (Tut != null) Tut.End();
             Mode = GameMode.Demo;
             SetupHumans();
             NewMatch();
             State = MatchState.Title;
-            MenuIndex = 0;
+            MenuIndex = TutorialNew ? 1 : 0;
             Paused = false; ShowHelp = false;
             Time.timeScale = 1;
         }
 
         public void StartMode(GameMode mode)
         {
+            Tut.End();
             Mode = mode;
             SetupHumans();
             NewMatch();
+            if (mode == GameMode.Tutorial)
+            {
+                State = MatchState.Playing; StateT = 0; Cinematic = false;
+                Cam.Release(); Cam.Snap();
+                Tut.Begin();
+                return;
+            }
             BeginKickoff(Home);
         }
 
@@ -112,7 +125,7 @@ namespace ChiStrikers
             foreach (var p in AllPlayers()) p.Human = null;
             switch (Mode)
             {
-                case GameMode.VsCpu: Home.Humans.Add(P1); break;
+                case GameMode.VsCpu: case GameMode.Tutorial: Home.Humans.Add(P1); break;
                 case GameMode.Versus: Home.Humans.Add(P1); Away.Humans.Add(P2); break;
                 case GameMode.Coop: Home.Humans.Add(P1); Home.Humans.Add(P2); break;
             }
@@ -122,6 +135,7 @@ namespace ChiStrikers
             {
                 case GameMode.Demo: Home.Skill = Skill.For(Level.Hard); Away.Skill = Skill.For(Level.Hard); break;
                 case GameMode.Versus: Home.Skill = Skill.Ally; Away.Skill = Skill.Ally; break;
+                case GameMode.Tutorial: Home.Skill = Skill.Ally; Away.Skill = Skill.For(Level.Easy); break;
                 default: Home.Skill = Skill.Ally; Away.Skill = cpu; break;
             }
         }
@@ -189,6 +203,7 @@ namespace ChiStrikers
                     break;
                 case MatchState.Playing:
                 case MatchState.Title:
+                    if (Mode == GameMode.Tutorial) break;
                     Clock -= dt;
                     if (Clock <= 0 && !Golden) EndOfHalf();
                     break;
@@ -212,6 +227,14 @@ namespace ChiStrikers
             bool live = State == MatchState.Playing || State == MatchState.Title;
             foreach (var t in new[] { Home, Away })
                 foreach (var c in t.Humans) if (live) HumanControl(t, c);
+            if (Mode == GameMode.Tutorial && live)
+            {
+                // drill players stand still unless the CPU brain or the drill script moves them
+                foreach (var p in AllPlayers()) if (p.Human == null) { p.Wish = Vector3.zero; p.WishSprint = false; }
+                Tut.Update(dt);
+                foreach (var p in AllPlayers()) if (p.Human == null && Tut.UsesBrain(p)) Brain.Think(p, dt);
+            }
+            else
             foreach (var p in AllPlayers())
             {
                 if (live && p.Human == null) Brain.Think(p, dt);
@@ -302,8 +325,8 @@ namespace ChiStrikers
         void TitleInput()
         {
             if (ShowHelp) { if (P1.Confirm || P1.Back || Controls.PausePressed() || continueClick) ShowHelp = false; continueClick = false; return; }
-            int n = P1.NavY(); if (n != 0) { MenuIndex = (MenuIndex - n + 5) % 5; Sfx.Play(Sfx.Pass, 0.3f, 1.5f); }
-            int nx = P1.NavX(); if (nx != 0 && MenuIndex == 3) CycleDifficulty(nx);
+            int n = P1.NavY(); if (n != 0) { MenuIndex = (MenuIndex - n + 6) % 6; Sfx.Play(Sfx.Pass, 0.3f, 1.5f); }
+            int nx = P1.NavX(); if (nx != 0 && MenuIndex == 4) CycleDifficulty(nx);
             bool go = P1.Confirm || P2.Confirm || titleClick;
             titleClick = false;
             if (go)
@@ -313,10 +336,11 @@ namespace ChiStrikers
                 switch (MenuIndex)
                 {
                     case 0: StartMode(GameMode.VsCpu); break;
-                    case 1: StartMode(GameMode.Versus); break;
-                    case 2: StartMode(GameMode.Coop); break;
-                    case 3: CycleDifficulty(1); break;
-                    case 4: ShowHelp = true; break;
+                    case 1: StartMode(GameMode.Tutorial); break;
+                    case 2: StartMode(GameMode.Versus); break;
+                    case 3: StartMode(GameMode.Coop); break;
+                    case 4: CycleDifficulty(1); break;
+                    case 5: ShowHelp = true; break;
                 }
             }
         }
@@ -336,6 +360,13 @@ namespace ChiStrikers
             if (cur == p) return;
             if (cur != null) { cur.Human = null; cur.Charge = -1; }
             p.Human = c;
+        }
+
+        /// <summary>Tutorial: hand a controller a specific player, whoever had them.</summary>
+        public void GiveControl(Team t, Controls c, Player p)
+        {
+            foreach (var o in t.Players) if (o.Human == c && o != p) { o.Human = null; o.Charge = -1; }
+            p.Human = c; c.AutoSwitchCd = 2f;
         }
 
         Player NearestFree(Team t, Vector3 pos, Controls c)
@@ -481,6 +512,7 @@ namespace ChiStrikers
         public void OnSpecialLaunched(Player p)
         {
             Arena.Excite = Mathf.Max(Arena.Excite, 0.7f);
+            if (Mode == GameMode.Tutorial) Tut.OnSpecial(p);
         }
 
         public void OnGoal(int side, Ball b)
@@ -506,6 +538,7 @@ namespace ChiStrikers
                 Sfx.Play(Sfx.Boom, 1f, 0.7f);
             }
             b.ClearSpecial();
+            if (Mode == GameMode.Tutorial) { team.Score--; Tut.OnGoal(team); return; }
             if (State == MatchState.Title)
             {
                 demoReset = 2.5f; demoConceded = team.Opp; // demo: restart from the centre shortly

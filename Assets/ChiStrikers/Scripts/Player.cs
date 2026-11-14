@@ -318,7 +318,7 @@ namespace ChiStrikers
             }
             Kick(vel, false, Pose.Pass, 0.28f);
             M.Ball.Receiver = t;
-            PassCd = 0.4f;
+            PassCd = 0.4f; M.LastPassThrough = false;
             M.OnPass(this, t);
         }
 
@@ -340,6 +340,7 @@ namespace ChiStrikers
             M.Ball.Receiver = t;
             PassCd = 0.4f;
             t.SupportT = 0; // stop wandering, go for the ball
+            M.LastPassThrough = true;
             M.OnPass(this, t);
         }
 
