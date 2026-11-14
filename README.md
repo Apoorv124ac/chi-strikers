@@ -22,6 +22,8 @@ The title screen plays a CPU-vs-CPU match in the background.
 
 Matches are two 3-minute halves. A draw goes to golden goal.
 
+**Difficulty** (on the title menu, change it with A / D or click): Easy, Normal, Hard, Legend. It sets how fast the CPU team thinks and runs, how hard it presses and tackles, how well it reads passes, how accurately it shoots, how good its keeper is and how fast its Chi fills. Your own CPU teammates are always sharp helpers: they make runs into open space, offer passing angles, cover and mark, and intercept.
+
 ## Controls
 
 | | Player 1 keyboard | Gamepad | Player 2 keyboard |
@@ -31,10 +33,15 @@ Matches are two 3-minute halves. A draw goes to golden goal.
 | Pass / tackle | J | A | Num 1 or `,` |
 | Shoot (hold for power) / slide tackle | K | B | Num 2 or `.` |
 | Lob / switch player | L | X (LB also switches) | Num 3 or `/` |
+| Pass straight to a teammate | 1 keeper, 2 Bhola, 3 Kabir, 4 Tara, 5 Veer | hold LT + Y Bhola, X Kabir, B Tara, A Veer | Num 6 - 9 |
+| Through ball (into the space ahead of a runner) | U | LB | Num 4 |
+| One-two (pass, keep running, get it back) | H | R3 | Num 5 |
 | **Special move** (full Chi) | Space | Y or RB | Num 0 or Right Ctrl |
 | Pause | Esc | Start | |
 
 The first gamepad joins Player 1 and the second joins Player 2. Holding shoot past the white mark on the power bar skies the ball.
+
+Every player has a floating **Chi energy bar** over their head. When it is full it flashes **SPECIAL!**. When you have the ball, each teammate shows the key that passes straight to them. When the other team has the ball and a teammate is much closer to it, control jumps to that teammate.
 
 ## Chi and special moves
 

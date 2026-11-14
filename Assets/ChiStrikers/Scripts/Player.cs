@@ -38,7 +38,9 @@ namespace ChiStrikers
         public Vector3 Fwd => transform.forward;
         public bool CanAct => State == PState.Free || State == PState.Hold;
         public bool Grounded => Lift <= 0.001f;
-        public float BaseSpeed => 6.2f * Def.Speed;
+        public float BaseSpeed => 6.2f * Def.Speed * (Human != null ? 1f : Team.Skill.Speed);
+        public Player ReturnTo; public float ReturnT;   // one-two: pass straight back to this player
+        public Vector3 SupportSpot; public float SupportT;
 
         public static Player Spawn(Match m, Team t, HeroDef def, int index)
         {
@@ -83,7 +85,8 @@ namespace ChiStrikers
             StateT += dt;
             TackleCd -= dt; PassCd -= dt;
             if (WallTime > 0) { WallTime -= dt; if (Random.value < dt * 30) M.Fx.Aura(Pos, Def.FxA, Def.FxB, 1.2f); }
-            Chi = Mathf.Min(1, Chi + dt * 0.012f);
+            Chi = Mathf.Min(1, Chi + dt * 0.012f * Team.Skill.Chi);
+            ReturnT -= dt; if (ReturnT <= 0) ReturnTo = null;
 
             // jumping / launched
             if (Lift > 0 || LiftVel > 0)
@@ -319,6 +322,35 @@ namespace ChiStrikers
             M.OnPass(this, t);
         }
 
+        /// <summary>Through ball: played into the space ahead of a runner, toward the opponent goal.</summary>
+        public void PassToSpace(Player t)
+        {
+            if (t == null) return;
+            var ahead = new Vector3(Team.Side, 0, 0);
+            var run = Util.Flat(t.Vel).sqrMagnitude > 4 ? Util.Flat(t.Vel).normalized : ahead;
+            var dirIn = (ahead * 0.7f + run * 0.3f).normalized;
+            float lead = Mathf.Clamp(Pitch.HalfL - Team.Side * t.Pos.x, 2f, 7f);
+            var aim = t.Pos + dirIn * lead;
+            aim.x = Mathf.Clamp(aim.x, -Pitch.HalfL + 1.5f, Pitch.HalfL - 1.5f);
+            aim.z = Mathf.Clamp(aim.z, -Pitch.HalfW + 1, Pitch.HalfW - 1);
+            float dist = Util.FlatDist(aim, Pos);
+            var d = Util.Flat(aim - Pos);
+            float spd = Mathf.Clamp(dist * 0.9f + 6f, 10f, 22f);
+            Kick(d.normalized * spd + Vector3.up * 0.4f, false, Pose.Pass, 0.28f);
+            M.Ball.Receiver = t;
+            PassCd = 0.4f;
+            t.SupportT = 0; // stop wandering, go for the ball
+            M.OnPass(this, t);
+        }
+
+        /// <summary>One-two: pass, keep running, and the teammate plays it straight back into your path.</summary>
+        public void OneTwo(Player t)
+        {
+            if (t == null) return;
+            t.ReturnTo = this; t.ReturnT = 2.2f;
+            PassTo(t, false);
+        }
+
         /// <summary>Shoot at the opponent goal. aimZ in -1..1 picks the post; power 0..1 (over 1 = risk of skying it).</summary>
         public void Shoot(float power, float aimZ)
         {
@@ -327,7 +359,7 @@ namespace ChiStrikers
             if (Mathf.Abs(aimZ) < 0.2f && keeper != null)
                 aimZ = keeper.Pos.z > 0 ? -0.8f : 0.8f; // aim away from the keeper
             float z = Mathf.Clamp(aimZ, -1, 1) * (Pitch.GoalHalfW - 0.55f);
-            float acc = 1.1f / Def.Shot;
+            float acc = 1.1f / (Def.Shot * (Human != null ? 1.1f : Team.Skill.Aim));
             z += Random.Range(-acc, acc) * 0.6f;
             float over = Mathf.Max(0, power - 1f);
             float y = Mathf.Lerp(0.35f, 1.9f, Mathf.Clamp01(power)) + over * 6f + Random.Range(-0.25f, 0.25f);
@@ -347,7 +379,7 @@ namespace ChiStrikers
             var carrier = b.Owner;
             if (carrier != null && carrier.Team != Team && Util.FlatDist(carrier.Pos, Pos) < 1.7f && carrier.State != PState.Hold && carrier.State != PState.Special)
             {
-                float chance = 0.5f * Def.Tackle / carrier.Dribble;
+                float chance = 0.5f * Def.Tackle * (Human != null ? 1.15f : Team.Skill.Tackle) / carrier.Dribble;
                 if (Random.value < chance)
                 {
                     WinBall(carrier, false);
@@ -406,7 +438,7 @@ namespace ChiStrikers
                 b.TakeBy(this);
                 carrier.SetState(PState.Stun, 0.45f);
             }
-            Chi = Mathf.Min(1, Chi + 0.15f);
+            Chi = Mathf.Min(1, Chi + 0.15f * Team.Skill.Chi);
             Sfx.Play(Sfx.Thud, 0.6f, 1.1f);
             M.Fx.Burst(Pos + Vector3.up * 0.5f, Color.white, Team.Def.Ui, 6, 3);
         }

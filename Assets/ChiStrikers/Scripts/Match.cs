@@ -14,6 +14,7 @@ namespace ChiStrikers
         public int Score;
         public Team Opp;
         public readonly List<Controls> Humans = new List<Controls>();
+        public Skill Skill = new Skill();
 
         public Player Keeper => Players[0];
         public Player ByRole(Role r) => Players[(int)r];
@@ -115,7 +116,18 @@ namespace ChiStrikers
                 case GameMode.Versus: Home.Humans.Add(P1); Away.Humans.Add(P2); break;
                 case GameMode.Coop: Home.Humans.Add(P1); Home.Humans.Add(P2); break;
             }
+            // CPU opponents play at the chosen difficulty; a human's teammates are always sharp helpers
+            var cpu = Skill.For(Difficulty);
+            switch (Mode)
+            {
+                case GameMode.Demo: Home.Skill = Skill.For(Level.Hard); Away.Skill = Skill.For(Level.Hard); break;
+                case GameMode.Versus: Home.Skill = Skill.Ally; Away.Skill = Skill.Ally; break;
+                default: Home.Skill = Skill.Ally; Away.Skill = cpu; break;
+            }
         }
+
+        public Level Difficulty = Level.Normal;
+        public void CycleDifficulty(int dir) { Difficulty = (Level)(((int)Difficulty + dir + 4) % 4); Sfx.Play(Sfx.Pass, 0.4f, 1.2f + 0.15f * (int)Difficulty); }
 
         void NewMatch()
         {
@@ -290,7 +302,8 @@ namespace ChiStrikers
         void TitleInput()
         {
             if (ShowHelp) { if (P1.Confirm || P1.Back || Controls.PausePressed() || continueClick) ShowHelp = false; continueClick = false; return; }
-            int n = P1.NavY(); if (n != 0) { MenuIndex = (MenuIndex - n + 4) % 4; Sfx.Play(Sfx.Pass, 0.3f, 1.5f); }
+            int n = P1.NavY(); if (n != 0) { MenuIndex = (MenuIndex - n + 5) % 5; Sfx.Play(Sfx.Pass, 0.3f, 1.5f); }
+            int nx = P1.NavX(); if (nx != 0 && MenuIndex == 3) CycleDifficulty(nx);
             bool go = P1.Confirm || P2.Confirm || titleClick;
             titleClick = false;
             if (go)
@@ -302,7 +315,8 @@ namespace ChiStrikers
                     case 0: StartMode(GameMode.VsCpu); break;
                     case 1: StartMode(GameMode.Versus); break;
                     case 2: StartMode(GameMode.Coop); break;
-                    case 3: ShowHelp = true; break;
+                    case 3: CycleDifficulty(1); break;
+                    case 4: ShowHelp = true; break;
                 }
             }
         }
@@ -341,6 +355,18 @@ namespace ChiStrikers
             var p = ControlledBy(t, c);
             if (p == null) { AssignControl(t, c, NearestFree(t, Ball.Pos, c)); p = ControlledBy(t, c); if (p == null) return; }
 
+            // defending: if a teammate is much closer to the ball, hand control to them
+            c.AutoSwitchCd -= Time.deltaTime;
+            if (Ball.Owner != null && Ball.Owner.Team != t && c.AutoSwitchCd <= 0)
+            {
+                float mine = Util.FlatDist(p.Pos, Ball.Pos);
+                var near = NearestFree(t, Ball.Pos, c);
+                if (near != null && near != p && mine > 9f && Util.FlatDist(near.Pos, Ball.Pos) < mine * 0.5f)
+                {
+                    AssignControl(t, c, near); p = near; c.AutoSwitchCd = 1.5f;
+                }
+            }
+
             var mv = c.Move;
             var dir = new Vector3(mv.x, 0, mv.y);
             p.Wish = dir;
@@ -358,7 +384,17 @@ namespace ChiStrikers
             if (p.HasBall)
             {
                 var aimDir = dir.sqrMagnitude > 0.01f ? dir : p.Fwd;
-                if (c.SpecialDown)
+                int direct = c.DirectPass();
+                if (direct >= 0)
+                {
+                    var mate = t.Players[direct];
+                    if (mate == p) ShowToast("That's you! Pick a teammate's number");
+                    else p.PassTo(mate, Util.FlatDist(mate.Pos, p.Pos) > 13f && p.Openness(mate.Pos, p.Pos) < 0.4f);
+                }
+                else if (c.PassModifier) { }
+                else if (c.ThroughDown) p.PassToSpace(p.PickPassTarget(aimDir, true));
+                else if (c.OneTwoDown) p.OneTwo(p.PickPassTarget(aimDir, false));
+                else if (c.SpecialDown)
                 {
                     if (Specials.CanUse(p)) Specials.Begin(p);
                     else ShowToast(p.Chi < 1 ? $"{p.Def.Name}'s Chi isn't full yet" : $"{p.Def.Name}'s special is for defending");
@@ -421,6 +457,7 @@ namespace ChiStrikers
                 var cur = ControlledBy(p.Team, c);
                 if (cur == p) return;
             }
+            if (p.ReturnTo != null && p.ReturnTo.Human != null) return; // one-two: the return pass is coming
             if (!p.IsKeeper && p.Team.Humans.Count > 0 && p.Human == null)
             {
                 // pick the human whose player is closest
@@ -437,6 +474,7 @@ namespace ChiStrikers
 
         public void OnPass(Player from, Player to)
         {
+            if (to != null && to.ReturnTo == from) return; // one-two: keep control of the runner
             if (from.Human != null && to != null && !to.IsKeeper && to.Human == null) AssignControl(from.Team, from.Human, to);
         }
 
@@ -552,10 +590,10 @@ namespace ChiStrikers
                     {
                         b.KeeperChecked = true;
                         float speed = b.Speed;
-                        float save = 0.9f * p.Def.Keeping - Mathf.Max(0, speed - 17f) * 0.028f - Mathf.Clamp01((bp.y - 1.8f) * 0.4f);
+                        float save = 0.9f * p.Def.Keeping * p.Team.Skill.Keeper - Mathf.Max(0, speed - 17f) * 0.028f - Mathf.Clamp01((bp.y - 1.8f) * 0.4f);
                         if (Random.value < save)
                         {
-                            p.Chi = Mathf.Min(1, p.Chi + 0.2f);
+                            p.Chi = Mathf.Min(1, p.Chi + 0.2f * p.Team.Skill.Chi);
                             if (speed < 23f || Random.value < 0.4f) { b.ClearShot(); b.TakeBy(p); Sfx.Play(Sfx.Thud, 0.7f, 1.2f); }
                             else
                             {

@@ -2,7 +2,11 @@ using UnityEngine;
 
 namespace ChiStrikers
 {
-    /// <summary>CPU football: formation, pressing, passing, shooting, specials and goalkeeping.</summary>
+    /// <summary>
+    /// CPU football. Attack: runs into open space, support angles, through balls, one-twos, weighted shot / pass / dribble
+    /// choices. Defence: goal-side pressing, a second man cutting the passing lane, man-marking, interceptions, a last
+    /// defender who holds the line, and a keeper who narrows the angle. Sharpness comes from the team's Skill (difficulty).
+    /// </summary>
     public static class Brain
     {
         // formation slots for a team attacking +X (x, z), index = Role
@@ -25,7 +29,10 @@ namespace ChiStrikers
             return new Vector3(x * t.Side, 0, s.y);
         }
 
-        /// <summary>Where this player should stand right now, based on where the ball is.</summary>
+        static Vector3 OppGoal(Team t) => new Vector3(t.Side * Pitch.HalfL, 0, 0);
+        static Vector3 OwnGoal(Team t) => new Vector3(-t.Side * Pitch.HalfL, 0, 0);
+
+        /// <summary>Base formation spot, sliding with the ball.</summary>
         public static Vector3 FormationSpot(Player p)
         {
             var t = p.Team; var m = p.M; var ball = m.Ball.Pos;
@@ -43,7 +50,7 @@ namespace ChiStrikers
 
         public static void Think(Player p, float dt)
         {
-            var m = p.M; var b = m.Ball; var t = p.Team;
+            var m = p.M; var b = m.Ball; var t = p.Team; var sk = t.Skill;
             p.WishSprint = false;
             if (!p.CanAct) { p.Wish = Vector3.zero; return; }
             if (p.IsKeeper) { Keeper(p, dt); return; }
@@ -61,68 +68,248 @@ namespace ChiStrikers
             bool weHave = b.Owner != null && b.Owner.Team == t;
             bool theyHave = b.Owner != null && b.Owner.Team != t;
 
-            if (theyHave)
+            // interceptions: a loose ball (their pass) we can reach first
+            if (b.Loose && !b.InNet && b.Pos.y < 1.6f)
             {
-                var carrier = b.Owner;
-                var presser = t.ClosestTo(carrier.Pos, true, true);
-                if (presser == p)
+                var spot = InterceptPoint(p, b, out float tReach);
+                if (spot.HasValue)
                 {
-                    // goal-side pressure, then tackle
-                    var goal = new Vector3(-t.Side * Pitch.HalfL, 0, 0);
-                    var spot = carrier.Pos + (goal - carrier.Pos).normalized * 0.9f + carrier.Vel * 0.15f;
-                    float d = Util.FlatDist(carrier.Pos, p.Pos);
-                    Chase(p, d < 2.5f ? carrier.Pos : spot, d > 5f);
-                    if (p.ThinkT <= 0)
+                    bool ours = b.Receiver != null && b.Receiver.Team == t;
+                    var chaser = t.ClosestTo(b.Pos, true, true);
+                    bool theirPass = b.Receiver != null && b.Receiver.Team != t;
+                    if (chaser == p || (theirPass && sk.Intercept > Mathf.Repeat(p.Index * 0.37f + b.Receiver.Index * 0.21f, 1f) && tReach < ReceiverTime(b)) || Util.FlatDist(p.Pos, b.Pos) < 2.5f)
                     {
-                        p.ThinkT = 0.18f;
-                        if (d < 1.55f && Random.value < 0.35f) p.Poke();
-                        else if (d < 3.2f && d > 1.4f && Random.value < 0.08f && Vector3.Dot(p.Fwd, (carrier.Pos - p.Pos).normalized) > 0.7f) p.Slide();
-                        else if (p.Def.Special == SpecialType.Shockwave && p.Chi >= 1 && d < 4.5f && Random.value < 0.5f) m.Specials.Begin(p);
+                        if (!ours || b.Receiver == p) { Chase(p, spot.Value, true); return; }
                     }
-                    return;
                 }
-                // second man: cover the most dangerous runner
-                var mark = Mark(p);
-                if (mark != null)
-                {
-                    var goal = new Vector3(-t.Side * Pitch.HalfL, 0, 0);
-                    Chase(p, mark.Pos + (goal - mark.Pos).normalized * 1.6f, false);
-                    return;
-                }
-                Chase(p, FormationSpot(p), false);
+            }
+
+            // a loose ball nobody of ours is receiving: the nearest player goes for it
+            if (b.Loose && !b.InNet && t.ClosestTo(b.Pos, true, true) == p && (b.Receiver == null || b.Receiver.Team != t))
+            {
+                float dd = Util.FlatDist(p.Pos, b.Pos);
+                Chase(p, b.Predict(Mathf.Clamp(dd / 9f, 0.05f, 0.6f)), dd > 3f);
                 return;
             }
 
-            if (!weHave)
+            if (theyHave) { Defend(p, b.Owner, dt); return; }
+
+            if (weHave) { Support(p, b.Owner, dt); return; }
+
+            // loose and not ours to chase: hold shape
+            Chase(p, FormationSpot(p), false);
+        }
+
+        /// <summary>Earliest point on the ball's path this player can get to in time.</summary>
+        static Vector3? InterceptPoint(Player p, Ball b, out float tReach)
+        {
+            float speed = p.BaseSpeed * 1.3f;
+            for (float tt = 0.05f; tt < 1.6f; tt += 0.1f)
             {
-                // loose ball: the nearest player chases it
-                var chaser = t.ClosestTo(b.Pos, true, true);
-                if (chaser == p || Util.FlatDist(p.Pos, b.Pos) < 3f)
+                var q = b.Predict(tt);
+                float need = Util.FlatDist(p.Pos, q) / speed + 0.12f;
+                if (need <= tt) { tReach = tt; return q; }
+            }
+            tReach = 99;
+            return null;
+        }
+
+        static float ReceiverTime(Ball b)
+        {
+            if (b.Receiver == null) return 99;
+            float speed = b.Receiver.BaseSpeed * 1.3f;
+            for (float tt = 0.05f; tt < 1.6f; tt += 0.1f)
+                if (Util.FlatDist(b.Receiver.Pos, b.Predict(tt)) / speed <= tt) return tt;
+            return 99;
+        }
+
+        // ------------------------------------------------------------------ defending
+        static void Defend(Player p, Player carrier, float dt)
+        {
+            var t = p.Team; var m = p.M; var sk = t.Skill;
+            var goal = OwnGoal(t);
+            var presser = t.ClosestTo(carrier.Pos, true, true);
+            float d = Util.FlatDist(carrier.Pos, p.Pos);
+
+            if (presser == p)
+            {
+                // goal-side pressure: get between the ball and the goal, then tackle
+                var spot = carrier.Pos + (goal - carrier.Pos).normalized * 0.9f + carrier.Vel * 0.18f;
+                Chase(p, d < 2.2f ? carrier.Pos + carrier.Vel * 0.1f : spot, d > 3f || sk.Press > 1.1f);
+                if (p.ThinkT <= 0)
                 {
-                    float d = Util.FlatDist(p.Pos, b.Pos);
-                    Chase(p, b.Predict(Mathf.Clamp(d / 9f, 0.05f, 0.6f)), d > 3f);
+                    p.ThinkT = 0.16f * sk.Think;
+                    float tackleRate = 0.28f * sk.Press;
+                    bool goalSide = Vector3.Dot(Util.Flat(goal - carrier.Pos), Util.Flat(p.Pos - carrier.Pos)) > 0;
+                    if (d < 1.55f && Random.value < tackleRate * (goalSide ? 1.4f : 0.8f)) p.Poke();
+                    else if (d < 3.2f && d > 1.3f && Random.value < 0.07f * sk.Press && Vector3.Dot(p.Fwd, (carrier.Pos - p.Pos).normalized) > 0.75f) p.Slide();
+                    else if (p.Def.Special == SpecialType.Shockwave && p.Chi >= 1 && d < 5f && Random.value < 0.5f) m.Specials.Begin(p);
+                }
+                return;
+            }
+
+            // a defender with a full Akhada Wall uses it when the carrier gets close to goal
+            if (p.Def.Special == SpecialType.Shockwave && p.Chi >= 1 && d < 6f && Util.FlatDist(carrier.Pos, goal) < 14f && p.ThinkT <= 0)
+            {
+                p.ThinkT = 0.3f;
+                if (Random.value < 0.6f * sk.Press) { m.Specials.Begin(p); return; }
+            }
+
+            // second closest: cut the most dangerous passing lane
+            var second = SecondClosest(t, carrier.Pos);
+            if (second == p)
+            {
+                var danger = MostDangerous(t.Opp, carrier);
+                if (danger != null)
+                {
+                    var lane = Vector3.Lerp(carrier.Pos, danger.Pos, 0.55f);
+                    Chase(p, lane, Util.FlatDist(p.Pos, lane) > 4f);
                     return;
                 }
             }
 
-            // support play
-            var spotA = FormationSpot(p);
-            if (weHave && p.Def.Role == Role.Striker)
+            // the defender is the last line: stay goal-side of the deepest attacker
+            if (p.Def.Role == Role.Defender)
             {
-                // make a run into space behind the defence
-                spotA.x += t.Side * 2f;
+                var deepest = Deepest(t.Opp);
+                if (deepest != null)
+                {
+                    var spot = deepest.Pos + (goal - deepest.Pos).normalized * 2f;
+                    spot.z = Mathf.Lerp(spot.z, carrier.Pos.z, 0.3f);
+                    Chase(p, spot, Util.FlatDist(p.Pos, spot) > 3f);
+                    return;
+                }
             }
-            Chase(p, spotA, false);
+
+            // everyone else: mark a man, goal-side
+            var mark = Mark(p);
+            if (mark != null && mark != carrier)
+            {
+                var spot = mark.Pos + (goal - mark.Pos).normalized * 1.5f + mark.Vel * 0.25f;
+                Chase(p, spot, Util.FlatDist(p.Pos, spot) > 4f);
+                return;
+            }
+            Chase(p, FormationSpot(p), false);
+        }
+
+        static Player SecondClosest(Team t, Vector3 pos)
+        {
+            Player a = null, bb = null; float da = 999, db = 999;
+            foreach (var p in t.Players)
+            {
+                if (p.IsKeeper || p.Human != null || p.State == PState.Down || p.State == PState.Flying) continue;
+                float d = Util.FlatDist(p.Pos, pos);
+                if (d < da) { bb = a; db = da; a = p; da = d; }
+                else if (d < db) { bb = p; db = d; }
+            }
+            return bb;
+        }
+
+        /// <summary>The opponent (not the carrier) closest to our goal and most open.</summary>
+        static Player MostDangerous(Team opp, Player carrier)
+        {
+            Player best = null; float bs = -999;
+            var goal = new Vector3(opp.Side * Pitch.HalfL, 0, 0);
+            foreach (var o in opp.Players)
+            {
+                if (o == carrier || o.IsKeeper) continue;
+                float s = -Util.FlatDist(o.Pos, goal) + carrier.Openness(o.Pos, carrier.Pos) * 6f;
+                if (s > bs) { bs = s; best = o; }
+            }
+            return best;
+        }
+
+        static Player Deepest(Team opp)
+        {
+            Player best = null; float bx = -999;
+            foreach (var o in opp.Players)
+            {
+                if (o.IsKeeper) continue;
+                float x = o.Pos.x * opp.Side;
+                if (x > bx) { bx = x; best = o; }
+            }
+            return best;
         }
 
         static Player Mark(Player p)
         {
-            // the defender and playmaker mark the opponents' striker and winger
             var t = p.Team;
-            if (p.Def.Role == Role.Defender) return t.Opp.ByRole(Role.Striker);
-            if (p.Def.Role == Role.Playmaker) return t.Opp.ByRole(Role.Playmaker);
-            if (p.Def.Role == Role.Winger && Mathf.Abs(p.M.Ball.Pos.x + t.Side * Pitch.HalfL) < 14) return t.Opp.ByRole(Role.Winger);
+            switch (p.Def.Role)
+            {
+                case Role.Defender: return t.Opp.ByRole(Role.Striker);
+                case Role.Playmaker: return t.Opp.ByRole(Role.Playmaker);
+                case Role.Winger: return t.Opp.ByRole(Role.Winger);
+                case Role.Striker:
+                    // strikers stay high to counter, loosely tracking their defender
+                    return null;
+            }
             return null;
+        }
+
+        // ------------------------------------------------------------------ attacking off the ball
+        static void Support(Player p, Player carrier, float dt)
+        {
+            var t = p.Team;
+            // one-two: the runner is coming, stay put and get ready
+            p.SupportT -= dt;
+            if (p.SupportT <= 0)
+            {
+                p.SupportT = Random.Range(0.35f, 0.6f) * t.Skill.Think;
+                p.SupportSpot = BestSupportSpot(p, carrier);
+            }
+            bool run = p.Def.Role == Role.Striker || p.Def.Role == Role.Winger;
+            Chase(p, p.SupportSpot, run && Util.FlatDist(p.Pos, p.SupportSpot) > 3f);
+        }
+
+        /// <summary>Scores spots around the formation slot: open, a clear lane from the ball, forward, spaced out.</summary>
+        static Vector3 BestSupportSpot(Player p, Player carrier)
+        {
+            var t = p.Team;
+            var basis = FormationSpot(p);
+            var goal = OppGoal(t);
+            Vector3 best = basis; float bs = -999;
+            for (int i = 0; i < 12; i++)
+            {
+                Vector3 c;
+                if (i == 0) c = basis;
+                else
+                {
+                    float ang = i * 30f;
+                    float r = (i % 2 == 0) ? 3.5f : 6f;
+                    c = basis + Quaternion.Euler(0, ang, 0) * Vector3.forward * r;
+                }
+                // runners push in behind the last defender
+                if (p.Def.Role == Role.Striker && i == 1)
+                {
+                    // run in behind: just past the opponents' last outfield player
+                    float line = -99;
+                    foreach (var o in t.Opp.Players) if (!o.IsKeeper) line = Mathf.Max(line, o.Pos.x * t.Side);
+                    c = new Vector3((line + 1.5f) * t.Side, 0, basis.z);
+                }
+                c.x = Mathf.Clamp(c.x, -Pitch.HalfL + 2f, Pitch.HalfL - 2f);
+                c.z = Mathf.Clamp(c.z, -Pitch.HalfW + 1.2f, Pitch.HalfW - 1.2f);
+
+                float s = 0;
+                // space from opponents
+                float near = 99;
+                foreach (var o in t.Opp.Players) near = Mathf.Min(near, Util.FlatDist(o.Pos, c));
+                s += Mathf.Clamp(near, 0, 6) * 0.9f;
+                // a clean passing lane from the carrier
+                s += carrier.Openness(c, carrier.Pos) * 4f;
+                // forward progress
+                s += t.Side * (c.x - carrier.Pos.x) * 0.25f;
+                // distance from the carrier: 6 to 14 m is ideal
+                float dc = Util.FlatDist(c, carrier.Pos);
+                s -= Mathf.Abs(dc - 9f) * 0.25f;
+                // don't crowd teammates
+                foreach (var o in t.Players) if (o != p) s -= Mathf.Max(0, 4f - Util.FlatDist(o.Pos, c)) * 0.8f;
+                // strikers like being near goal
+                if (p.Def.Role == Role.Striker) s -= Util.FlatDist(c, goal) * 0.12f;
+                // stay near the role's slot
+                s -= Util.FlatDist(c, basis) * 0.15f;
+                if (s > bs) { bs = s; best = c; }
+            }
+            return best;
         }
 
         static void Chase(Player p, Vector3 target, bool sprint)
@@ -143,51 +330,86 @@ namespace ChiStrikers
             }
         }
 
+        // ------------------------------------------------------------------ on the ball
         static void Carrier(Player p, float dt)
         {
-            var t = p.Team; var m = p.M;
-            var goal = new Vector3(t.Side * Pitch.HalfL, 0, 0);
+            var t = p.Team; var m = p.M; var sk = t.Skill;
+            var goal = OppGoal(t);
             float goalDist = Util.FlatDist(goal, p.Pos);
             var toGoal = Util.Flat(goal - p.Pos).normalized;
 
-            // pressure in front
-            float pressure = 99; Player nearest = null;
+            // pressure
+            float pressure = 99;
             foreach (var o in t.Opp.Players)
             {
                 if (o.State == PState.Down || o.State == PState.Flying) continue;
-                float d = Util.FlatDist(o.Pos, p.Pos);
-                if (d < pressure) { pressure = d; nearest = o; }
+                pressure = Mathf.Min(pressure, Util.FlatDist(o.Pos, p.Pos));
+            }
+
+            // one-two return: play it straight into the runner's path
+            if (p.ReturnTo != null && p.ReturnTo.CanAct)
+            {
+                var runner = p.ReturnTo;
+                p.ReturnTo = null;
+                p.PassToSpace(runner);
+                return;
             }
 
             if (p.ThinkT <= 0)
             {
-                p.ThinkT = Random.Range(0.15f, 0.3f);
+                p.ThinkT = Random.Range(0.15f, 0.28f) * sk.Think;
 
                 // special move?
                 if (p.Chi >= 1 && m.Specials.CanUse(p))
                 {
                     float range = p.Def.Special == SpecialType.AerialShot ? 21 : p.Def.Special == SpecialType.CurveShot ? 24 : 26;
-                    if (goalDist < range && Random.value < 0.6f) { m.Specials.Begin(p); return; }
+                    if (goalDist < range && goalDist > 7 && Random.value < 0.4f + 0.3f * sk.Vision) { m.Specials.Begin(p); return; }
                 }
 
-                // shoot?
+                // weigh shooting, passing and dribbling
                 float lane = p.Openness(goal, p.Pos);
-                if (goalDist < 7.5f || (goalDist < 15f && lane > 0.3f && Random.value < 0.55f) || (goalDist < 19f && lane > 0.75f && Random.value < 0.18f))
+                float angle = Mathf.Abs(Vector3.Angle(toGoal, new Vector3(t.Side, 0, 0)));
+                float shoot = 0;
+                if (goalDist < 20f) shoot = (20f - goalDist) * 0.32f + lane * 2.5f - angle * 0.04f + (goalDist < 7.5f ? 3 : 0);
+
+                Player bestMate = null; float pass = -99; bool through = false;
+                foreach (var mate in t.Players)
                 {
-                    p.Shoot(Random.Range(0.6f, 1f), Random.Range(-1f, 1f) * (Random.value < 0.6f ? 1 : 0));
+                    if (mate == p || mate.State == PState.Down || mate.State == PState.Flying || mate.IsKeeper) continue;
+                    float open = p.Openness(mate.Pos, p.Pos);
+                    float prog = t.Side * (mate.Pos.x - p.Pos.x);
+                    float matGoal = Util.FlatDist(mate.Pos, goal);
+                    float sc = open * 4f + prog * 0.22f - matGoal * 0.08f - Mathf.Abs(Util.FlatDist(mate.Pos, p.Pos) - 9f) * 0.12f;
+                    // runners ahead with space behind the defence: through ball
+                    bool canThrough = prog > 2 && (mate.Def.Role == Role.Striker || mate.Def.Role == Role.Winger) && open > 0.35f && matGoal > 5;
+                    if (canThrough) sc += 1.2f;
+                    if (sc > pass) { pass = sc; bestMate = mate; through = canThrough; }
+                }
+                if (pressure < 2.2f) pass += 2.5f; else if (pressure > 5f) pass -= 1.5f;
+
+                float dribble = pressure > 3.5f ? 2.5f : pressure > 2.2f ? 0.8f : -1f;
+                dribble += (goalDist > 14f ? 1f : 0f);
+
+                // weaker CPUs sometimes make the second-best choice
+                if (Random.value > sk.Vision) { shoot += Random.Range(-2f, 2f); pass += Random.Range(-2f, 2f); dribble += Random.Range(-2f, 2f); }
+
+                if (shoot > pass && shoot > dribble && shoot > 1.2f)
+                {
+                    var keeper = t.Opp.Keeper;
+                    float aimZ = keeper != null ? (keeper.Pos.z > 0 ? -0.85f : 0.85f) : 0;
+                    float power = goalDist < 9 ? Random.Range(0.55f, 0.85f) : Random.Range(0.8f, 1f);
+                    p.Shoot(power, aimZ);
                     return;
                 }
-
-                // pass when pressed, or now and then to keep the ball moving
-                if (p.PassCd <= 0 && (pressure < 2.3f || Random.value < 0.05f))
+                if (bestMate != null && p.PassCd <= 0 && pass > dribble && pass > 0.5f)
                 {
-                    var target = p.PickPassTarget(toGoal, true);
-                    if (target != null && p.Openness(target.Pos, p.Pos) > 0.3f)
-                    {
-                        bool lob = p.Openness(target.Pos, p.Pos) < 0.5f && Util.FlatDist(target.Pos, p.Pos) > 9f;
-                        p.PassTo(target, lob);
-                        return;
-                    }
+                    float open = p.Openness(bestMate.Pos, p.Pos);
+                    float dist = Util.FlatDist(bestMate.Pos, p.Pos);
+                    if (through && Random.value < 0.6f) p.PassToSpace(bestMate);
+                    else if (open < 0.5f && dist > 9f) p.PassTo(bestMate, true);
+                    else if (pressure < 2.5f && dist < 12f && Random.value < 0.35f * sk.Vision) p.OneTwo(bestMate);
+                    else p.PassTo(bestMate, false);
+                    return;
                 }
             }
 
@@ -201,36 +423,37 @@ namespace ChiStrikers
                 {
                     var side = Vector3.Cross(Vector3.up, toGoal);
                     float s = Vector3.Dot(away, side) >= 0 ? 1 : -1;
-                    dir += side * s * (4f - d) * 0.35f + away / d * (4f - d) * 0.1f;
+                    dir += side * s * (4f - d) * 0.4f + away / d * (4f - d) * 0.12f;
                 }
             }
-            // stay off the boards
             if (Mathf.Abs(p.Pos.z) > Pitch.HalfW - 2.5f) dir += new Vector3(0, 0, -Mathf.Sign(p.Pos.z) * 0.8f);
             p.Wish = dir.normalized;
-            p.WishSprint = pressure > 3.5f;
+            p.WishSprint = pressure > 3f;
         }
 
         // ------------------------------------------------------------------ goalkeeper
         static void Keeper(Player p, float dt)
         {
-            var t = p.Team; var m = p.M; var b = m.Ball;
+            var t = p.Team; var m = p.M; var b = m.Ball; var sk = t.Skill;
             float goalX = -t.Side * Pitch.HalfL;
 
             if (b.Owner == p)
             {
-                // hold for a moment, then distribute
+                // hold for a moment, then distribute (quick throw to an open player, or a long ball to a runner)
                 p.Wish = Vector3.zero;
-                if (p.StateT > 1.0f && p.ThinkT <= 0)
+                p.ThinkT -= dt;
+                if (p.StateT > 0.8f * sk.Think && p.ThinkT <= 0)
                 {
-                    p.ThinkT = 0.5f;
-                    var target = p.PickPassTarget(new Vector3(t.Side, 0, 0), false);
+                    p.ThinkT = 0.4f;
+                    var target = p.PickPassTarget(new Vector3(t.Side, 0, 0), true);
                     if (target != null)
                     {
                         p.State = PState.Free;
-                        p.PassTo(target, Util.FlatDist(target.Pos, p.Pos) > 12f);
+                        float dist = Util.FlatDist(target.Pos, p.Pos);
+                        if (dist > 14f && target.Def.Role != Role.Defender) p.PassToSpace(target);
+                        else p.PassTo(target, dist > 12f);
                     }
                 }
-                p.ThinkT -= dt;
                 return;
             }
 
@@ -247,14 +470,13 @@ namespace ChiStrikers
                     {
                         p.Wish = new Vector3(0, 0, Mathf.Clamp(dz * 3f, -1, 1));
                         p.WishSprint = true;
-                        if (Mathf.Abs(dz) > 0.9f && tt < 0.4f && p.State == PState.Free)
+                        float react = 0.4f * Mathf.Clamp(sk.Keeper, 0.7f, 1.3f);
+                        if (Mathf.Abs(dz) > 0.9f && tt < react && p.State == PState.Free)
                         {
-                            // dive toward the shot
                             p.SetState(PState.Dive, 0.8f);
                             float side = Mathf.Sign(dz);
-                            // which way is "right" for the body depends on the facing
                             p.Body.Side = Vector3.Dot(p.transform.right, new Vector3(0, 0, side)) >= 0 ? 1 : -1;
-                            p.Vel = new Vector3(0, 0, side * Mathf.Min(Mathf.Abs(dz) / Mathf.Max(tt, 0.15f), 9f));
+                            p.Vel = new Vector3(0, 0, side * Mathf.Min(Mathf.Abs(dz) / Mathf.Max(tt, 0.15f), 9f * sk.Keeper));
                             p.Jump(Mathf.Clamp(hit.y * 3.2f, 1.5f, 6f));
                         }
                         return;
@@ -262,24 +484,37 @@ namespace ChiStrikers
                 }
             }
 
-            // rush out for a loose ball in the box
-            if (b.Loose && !b.InNet && Pitch.InBox(b.Pos, goalX) && t.ClosestTo(b.Pos, false, false) == p && b.Pos.y < 2.2f)
+            // rush out for a loose ball in the box, or to smother a through ball
+            bool inBox = Pitch.InBox(b.Pos, goalX);
+            if (b.Loose && !b.InNet && b.Pos.y < 2.2f && (inBox || Util.FlatDist(b.Pos, p.Pos) < 5f))
             {
-                var d = Util.Flat(b.Predict(0.15f) - p.Pos);
-                p.Wish = d.normalized; p.WishSprint = true;
-                return;
+                var nearestOpp = t.Opp.ClosestTo(b.Pos, true, false);
+                float myT = Util.FlatDist(p.Pos, b.Pos) / p.BaseSpeed;
+                float theirT = nearestOpp != null ? Util.FlatDist(nearestOpp.Pos, b.Pos) / nearestOpp.BaseSpeed : 99;
+                if (t.ClosestTo(b.Pos, false, false) == p || myT < theirT * 0.9f)
+                {
+                    var d = Util.Flat(b.Predict(0.15f) - p.Pos);
+                    p.Wish = d.normalized; p.WishSprint = true;
+                    return;
+                }
             }
 
-            // guard the line, shading toward the ball
-            float out_ = Mathf.Clamp(1.3f + (Pitch.HalfL - Mathf.Abs(b.Pos.x - goalX)) * 0, 1.0f, 2.5f);
+            // narrow the angle: stand on the line from the ball to the goal centre
             float bxRel = Mathf.Abs(b.Pos.x - goalX);
-            out_ = bxRel < 12 ? 2.2f : 1.2f;
-            var spot = new Vector3(goalX + t.Side * out_, 0, Mathf.Clamp(b.Pos.z * 0.4f, -Pitch.GoalHalfW + 0.6f, Pitch.GoalHalfW - 0.6f));
+            float out_ = bxRel < 8 ? 1.8f : bxRel < 16 ? 2.6f : 1.4f;
+            var goalC = new Vector3(goalX, 0, 0);
+            var toBall = Util.Flat(b.Pos - goalC);
+            var spot = goalC + (toBall.sqrMagnitude > 0.01f ? toBall.normalized : new Vector3(t.Side, 0, 0)) * out_;
+            spot.z = Mathf.Clamp(spot.z, -Pitch.GoalHalfW + 0.5f, Pitch.GoalHalfW - 0.5f);
+            if ((spot.x - goalX) * t.Side < 0.6f) spot.x = goalX + t.Side * 0.6f;
             var dd = Util.Flat(spot - p.Pos);
             p.Wish = dd.magnitude > 0.2f ? Vector3.ClampMagnitude(dd * 1.2f, 1f) : Vector3.zero;
-            // face the play
             if (p.Wish.sqrMagnitude < 0.04f)
-                p.transform.rotation = Quaternion.RotateTowards(p.transform.rotation, Quaternion.LookRotation(Util.Flat(b.Pos - p.Pos).normalized + new Vector3(t.Side, 0, 0) * 0.01f), 400 * dt);
+            {
+                var face = Util.Flat(b.Pos - p.Pos);
+                if (face.sqrMagnitude > 0.01f)
+                    p.transform.rotation = Quaternion.RotateTowards(p.transform.rotation, Quaternion.LookRotation(face.normalized), 400 * dt);
+            }
         }
     }
 }

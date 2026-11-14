@@ -139,26 +139,64 @@ namespace ChiStrikers
             }
         }
 
+        /// <summary>Floating Chi energy bar over every player, plus name, shot power and pass-shortcut badges for humans.</summary>
         void Markers()
         {
             var cam = M.Cam ? M.Cam.Cam : null;
             if (!cam || M.Cinematic) return;
+            // which human is on the ball (to show pass shortcuts over their teammates)
+            Player onBall = M.Ball.Owner != null && M.Ball.Owner.Human != null ? M.Ball.Owner : null;
             foreach (var p in M.AllPlayers())
             {
-                if (p.Human == null) continue;
-                var sp = cam.WorldToScreenPoint(p.Pos + Vector3.up * (2.25f * p.Def.Look.Height + p.Lift));
+                var sp = cam.WorldToScreenPoint(p.Pos + Vector3.up * (2.05f * p.Def.Look.Height + p.Lift));
                 if (sp.z < 0) continue;
                 float x = sp.x, y = Screen.height - sp.y;
-                var col = p.Human.Slot == 0 ? Yellow : Sky;
-                Text(new Rect(x - 60 * s, y - 40 * s, 120 * s, 30 * s), (p.Human.Slot == 0 ? "P1 " : "P2 ") + p.Def.Name.ToUpper(), 18, col, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
-                Box(new Rect(x - 5 * s, y - 12 * s, 10 * s, 10 * s), col);
-                if (p.Charge >= 0)
+                bool human = p.Human != null;
+                bool humanTeam = p.Team.Humans.Count > 0;
+                float k = human ? 1.25f : humanTeam ? 1f : 0.85f;
+                float bw = 58 * s * k, bh = 8 * s * k;
+                bool full = p.Chi >= 1;
+                bool pulse = full && Mathf.Repeat(Time.unscaledTime * 3f, 1f) < 0.5f;
+
+                // Chi energy bar
+                var bar = new Rect(x - bw * 0.5f, y - bh, bw, bh);
+                Box(new Rect(bar.x - 2 * s, bar.y - 2 * s, bar.width + 4 * s, bar.height + 4 * s), new Color(Ink.r, Ink.g, Ink.b, 0.85f));
+                Box(bar, new Color(0.1f, 0.12f, 0.2f, 0.9f));
+                var fill = full ? (pulse ? Color.white : p.Def.FxA) : p.Def.FxB;
+                Box(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(p.Chi), bar.height), fill);
+                // quarter ticks
+                for (int i = 1; i < 4; i++) Box(new Rect(bar.x + bar.width * i / 4f, bar.y, 1.5f * s, bar.height), new Color(Ink.r, Ink.g, Ink.b, 0.6f));
+                if (full)
                 {
-                    var r = new Rect(x - 50 * s, y + 10 * s, 100 * s, 12 * s);
-                    Box(new Rect(r.x - 2 * s, r.y - 2 * s, r.width + 4 * s, r.height + 4 * s), Ink);
-                    float k = Mathf.Clamp01(p.Charge / 1.15f);
-                    Box(new Rect(r.x, r.y, r.width * k, r.height), p.Charge > 1f ? Util.Hex("#e0352b") : Color.Lerp(Yellow, Orange, k));
-                    Box(new Rect(r.x + r.width * (1f / 1.15f), r.y - 3 * s, 2 * s, r.height + 6 * s), Color.white);
+                    string tag = p.Def.Special == SpecialType.KeeperSave ? "AUTO SAVE READY" : (human ? "SPECIAL! [" + p.Human.KeySpecial.ToUpper() + "]" : "SPECIAL!");
+                    Text(new Rect(x - 90 * s, bar.y - 24 * s, 180 * s, 20 * s), tag, (int)(14 * k), pulse ? p.Def.FxA : Color.white, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic, 2);
+                }
+
+                if (human)
+                {
+                    var col = p.Human.Slot == 0 ? Yellow : Sky;
+                    float ny = bar.y - (full ? 46 : 28) * s;
+                    Text(new Rect(x - 80 * s, ny, 160 * s, 24 * s), (p.Human.Slot == 0 ? "P1 " : "P2 ") + p.Def.Name.ToUpper(), 18, col, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
+                    if (p.Charge >= 0)
+                    {
+                        var r = new Rect(x - 50 * s, bar.yMax + 8 * s, 100 * s, 12 * s);
+                        Box(new Rect(r.x - 2 * s, r.y - 2 * s, r.width + 4 * s, r.height + 4 * s), Ink);
+                        float kk = Mathf.Clamp01(p.Charge / 1.15f);
+                        Box(new Rect(r.x, r.y, r.width * kk, r.height), p.Charge > 1f ? Util.Hex("#e0352b") : Color.Lerp(Yellow, Orange, kk));
+                        Box(new Rect(r.x + r.width * (1f / 1.15f), r.y - 3 * s, 2 * s, r.height + 6 * s), Color.white);
+                    }
+                }
+                else if (onBall != null && p.Team == onBall.Team && p != onBall)
+                {
+                    // pass shortcut badge: the key that passes straight to this teammate
+                    int role = (int)p.Def.Role;
+                    string key = onBall.Human.HasPad ? "LT+" + onBall.Human.PadFor(role) : onBall.Human.KeyFor(role);
+                    if (!string.IsNullOrEmpty(key) && !(onBall.Human.HasPad && onBall.Human.PadFor(role) == ""))
+                    {
+                        var r = new Rect(x - 26 * s, bar.y - 34 * s, 52 * s, 26 * s);
+                        Box(r, onBall.Human.Slot == 0 ? Yellow : Sky);
+                        Text(r, key, 18, Navy, TextAnchor.MiddleCenter, FontStyle.Bold);
+                    }
                 }
             }
         }
@@ -265,8 +303,8 @@ namespace ChiStrikers
 
             if (M.ShowHelp) { Help(W, H); return; }
 
-            string[] items = { "PLAY vs CPU", "2 PLAYERS: VERSUS", "2 PLAYERS: CO-OP vs CPU", "HOW TO PLAY" };
-            float iw = 560 * s, ih = 70 * s, y0 = H * 0.5f;
+            string[] items = { "PLAY vs CPU", "2 PLAYERS: VERSUS", "2 PLAYERS: CO-OP vs CPU", "<  DIFFICULTY: " + Skill.For(M.Difficulty).Name + "  >", "HOW TO PLAY" };
+            float iw = 560 * s, ih = 62 * s, y0 = H * 0.47f;
             for (int i = 0; i < items.Length; i++)
             {
                 bool sel = i == M.MenuIndex;
@@ -283,7 +321,7 @@ namespace ChiStrikers
 
         void Help(float W, float H)
         {
-            float w = 1500 * s, h = 560 * s;
+            float w = 1500 * s, h = 660 * s;
             var r = new Rect(W * 0.5f - w * 0.5f, H * 0.42f, w, h);
             Box(r, new Color(Navy.r, Navy.g, Navy.b, 0.95f));
             Box(new Rect(r.x, r.y, r.width, 6 * s), Yellow);
@@ -295,6 +333,8 @@ namespace ChiStrikers
                 { "Pass  /  Tackle", "J", "A", "Num 1  or  ," },
                 { "Shoot (hold for power)  /  Slide tackle", "K", "B", "Num 2  or  ." },
                 { "Lob  /  Switch player", "L", "X  (LB switch)", "Num 3  or  /" },
+                { "Pass straight to a teammate", "1 - 5", "hold LT + A/B/X/Y", "Num 6 - 9" },
+                { "Through ball  /  One-two", "U  /  H", "LB  /  R3", "Num 4  /  Num 5" },
                 { "SPECIAL MOVE (full Chi)", "Space", "Y or RB", "Num 0  or  Right Ctrl" },
                 { "Pause", "Esc", "Start", "" },
             };
@@ -303,7 +343,7 @@ namespace ChiStrikers
             for (int i = 0; i < rows.GetLength(0); i++)
                 for (int j = 0; j < 4; j++)
                     Text(new Rect(cx0 + cols[j], r.y + 24 * s + i * 46 * s, 400 * s, 40 * s), rows[i, j], i == 0 ? 20 : 24, i == 0 ? Yellow : (j == 0 ? Color.white : Sky), TextAnchor.MiddleLeft, i == 0 ? FontStyle.Bold : FontStyle.Normal);
-            Text(new Rect(r.x + 30 * s, r.y + 24 * s + 8 * 46 * s, w - 60 * s, 90 * s),
+            Text(new Rect(r.x + 30 * s, r.y + 24 * s + 10 * 46 * s, w - 60 * s, 90 * s),
                 "Chi fills from passes, tackles, interceptions and saves. With a full bar, press Special with the ball: Veer's Agni Strike, Tara's Sky Step and Kabir's Chakra Strike are shots. Bhola's Akhada Wall works anytime and blocks any shot. Guru Dada's Thousand Hands saves a special by itself. Only specials beat specials.",
                 20, Color.white, TextAnchor.UpperLeft, FontStyle.Italic);
             style.wordWrap = false;

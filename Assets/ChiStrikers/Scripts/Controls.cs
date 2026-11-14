@@ -12,6 +12,7 @@ namespace ChiStrikers
     {
         public readonly int Slot; // 0 = player 1, 1 = player 2
         public Controls(int slot) { Slot = slot; }
+        public float AutoSwitchCd;
 
         static Keyboard K => Keyboard.current;
         Gamepad Pad => Gamepad.all.Count > Slot ? Gamepad.all[Slot] : null;
@@ -54,6 +55,47 @@ namespace ChiStrikers
         public bool ShootHeld => (Slot == 0 ? Held(Key.K) : Held(Key.Numpad2) || Held(Key.Period)) || (Pad != null && Pad.buttonEast.isPressed) || LegacyPad(1, false);
         public bool LobDown => (Slot == 0 ? Down(Key.L) : Down(Key.Numpad3) || Down(Key.Slash)) || (Pad != null && Pad.buttonWest.wasPressedThisFrame) || LegacyPad(2, true);
         public bool SpecialDown => (Slot == 0 ? Down(Key.Space) : Down(Key.Numpad0) || Down(Key.RightCtrl)) || (Pad != null && (Pad.buttonNorth.wasPressedThisFrame || Pad.rightShoulder.wasPressedThisFrame)) || LegacyPad(3, true);
+        /// <summary>Direct pass to a teammate: returns the Role index (1 Defender .. 4 Striker, 0 Keeper) or -1.</summary>
+        public int DirectPass()
+        {
+            if (Slot == 0)
+            {
+                if (Down(Key.Digit1)) return 0;
+                if (Down(Key.Digit2)) return 1;
+                if (Down(Key.Digit3)) return 2;
+                if (Down(Key.Digit4)) return 3;
+                if (Down(Key.Digit5)) return 4;
+            }
+            else
+            {
+                if (Down(Key.Numpad6)) return 1;
+                if (Down(Key.Numpad7)) return 2;
+                if (Down(Key.Numpad8)) return 3;
+                if (Down(Key.Numpad9)) return 4;
+            }
+            var p = Pad;
+            if (p != null && p.leftTrigger.isPressed)
+            {
+                if (p.buttonSouth.wasPressedThisFrame) return 4; // A = striker
+                if (p.buttonEast.wasPressedThisFrame) return 3;  // B = winger
+                if (p.buttonWest.wasPressedThisFrame) return 2;  // X = playmaker
+                if (p.buttonNorth.wasPressedThisFrame) return 1; // Y = defender
+            }
+            return -1;
+        }
+
+        /// <summary>Gamepad: LT turns the face buttons into direct passes.</summary>
+        public bool PassModifier => Pad != null && Pad.leftTrigger.isPressed;
+        public bool ThroughDown => (Slot == 0 ? Down(Key.U) : Down(Key.Numpad4)) || (Pad != null && Pad.leftShoulder.wasPressedThisFrame);
+        public bool OneTwoDown => (Slot == 0 ? Down(Key.H) : Down(Key.Numpad5)) || (Pad != null && Pad.rightStickButton.wasPressedThisFrame);
+        public string KeyFor(int role)
+        {
+            if (Slot == 0) return (role + 1).ToString();
+            return role >= 1 ? "N" + (role + 5) : "";
+        }
+        public string PadFor(int role) => role == 4 ? "A" : role == 3 ? "B" : role == 2 ? "X" : role == 1 ? "Y" : "";
+        public bool HasPad => Pad != null;
+
         public bool SwitchDown => LobDown || (Pad != null && Pad.leftShoulder.wasPressedThisFrame);
 
         public bool Confirm => (Slot == 0 ? Down(Key.Enter) || Down(Key.Space) || Down(Key.J) || Down(Key.NumpadEnter) : Down(Key.Numpad1))
@@ -107,6 +149,10 @@ namespace ChiStrikers
                 case Key.Comma: return KeyCode.Comma; case Key.Period: return KeyCode.Period; case Key.Slash: return KeyCode.Slash;
                 case Key.Numpad0: return KeyCode.Keypad0; case Key.Numpad1: return KeyCode.Keypad1;
                 case Key.Numpad2: return KeyCode.Keypad2; case Key.Numpad3: return KeyCode.Keypad3;
+                case Key.Numpad4: return KeyCode.Keypad4; case Key.Numpad5: return KeyCode.Keypad5; case Key.Numpad6: return KeyCode.Keypad6;
+                case Key.Numpad7: return KeyCode.Keypad7; case Key.Numpad8: return KeyCode.Keypad8; case Key.Numpad9: return KeyCode.Keypad9;
+                case Key.Digit1: return KeyCode.Alpha1; case Key.Digit2: return KeyCode.Alpha2; case Key.Digit3: return KeyCode.Alpha3;
+                case Key.Digit4: return KeyCode.Alpha4; case Key.Digit5: return KeyCode.Alpha5;
             }
             if (k >= Key.A && k <= Key.Z) return KeyCode.A + (k - Key.A);
             return KeyCode.None;

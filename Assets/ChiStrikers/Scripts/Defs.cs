@@ -148,3 +148,28 @@ namespace ChiStrikers
         }
     }
 }
+
+namespace ChiStrikers
+{
+    public enum Level { Easy, Normal, Hard, Legend }
+
+    /// <summary>How sharp a team's CPU players are. CPU opponents use the chosen difficulty; a human's teammates use Ally.</summary>
+    public sealed class Skill
+    {
+        public string Name;
+        public float Speed = 1, Think = 1, Tackle = 1, Press = 1, Aim = 1, Keeper = 1, Chi = 1, Vision = 0.7f, Intercept = 0.7f;
+
+        public static Skill For(Level l)
+        {
+            switch (l)
+            {
+                case Level.Easy: return new Skill { Name = "EASY", Speed = 0.9f, Think = 1.6f, Tackle = 0.6f, Press = 0.5f, Aim = 0.75f, Keeper = 0.78f, Chi = 0.7f, Vision = 0.45f, Intercept = 0.35f };
+                case Level.Hard: return new Skill { Name = "HARD", Speed = 1.05f, Think = 0.75f, Tackle = 1.25f, Press = 1.3f, Aim = 1.15f, Keeper = 1.12f, Chi = 1.25f, Vision = 0.88f, Intercept = 0.9f };
+                case Level.Legend: return new Skill { Name = "LEGEND", Speed = 1.1f, Think = 0.55f, Tackle = 1.5f, Press = 1.6f, Aim = 1.3f, Keeper = 1.25f, Chi = 1.5f, Vision = 1f, Intercept = 1f };
+                default: return new Skill { Name = "NORMAL" };
+            }
+        }
+
+        public static Skill Ally => new Skill { Name = "ALLY", Speed = 1f, Think = 0.8f, Tackle = 1.15f, Press = 1.2f, Aim = 1.1f, Keeper = 1.1f, Chi = 1f, Vision = 0.9f, Intercept = 0.9f };
+    }
+}
