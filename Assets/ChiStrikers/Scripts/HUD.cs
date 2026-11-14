@@ -42,9 +42,17 @@ namespace ChiStrikers
             GUI.Label(r, text, style);
         }
 
+        bool Clicked(Rect r)
+        {
+            var e = Event.current;
+            if (e.type == EventType.MouseDown && e.button == 0 && r.Contains(e.mousePosition)) { e.Use(); return true; }
+            return false;
+        }
+
         void OnGUI()
         {
             if (M == null) return;
+            if ((M.ShowHelp || M.State == MatchState.FullTime) && Event.current.type == EventType.MouseDown) M.ClickContinue();
             if (style == null)
             {
                 style = new GUIStyle(GUI.skin.label) { wordWrap = false, richText = false };
@@ -263,11 +271,14 @@ namespace ChiStrikers
             {
                 bool sel = i == M.MenuIndex;
                 var r = new Rect(W * 0.5f - iw * 0.5f, y0 + i * (ih + 14 * s), iw, ih);
+                if (Clicked(r)) M.ClickTitle(i);
+                if (r.Contains(Event.current.mousePosition) && Event.current.type == EventType.MouseMove) M.MenuIndex = i;
                 Box(r, sel ? Yellow : new Color(Navy.r, Navy.g, Navy.b, 0.9f));
                 if (sel) Box(new Rect(r.x, r.yMax - 6 * s, r.width, 6 * s), Orange);
                 Text(r, items[i], 32, sel ? Navy : Color.white, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic);
             }
-            Text(new Rect(0, H - 70 * s, W, 40 * s), "W / S or D-pad to choose  ·  Enter or A to start", 22, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
+            Text(new Rect(0, H - 70 * s, W, 40 * s), "Click, or W / S and Enter, or D-pad and A  ·  click the Game view first so it gets the keyboard", 22, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold, 2);
+            Text(new Rect(10 * s, H - 34 * s, 600 * s, 30 * s), "Input: " + Controls.Status, 16, Controls.Status == "NO INPUT" ? Util.Hex("#e0352b") : Sky, TextAnchor.MiddleLeft, FontStyle.Normal);
         }
 
         void Help(float W, float H)
@@ -309,6 +320,7 @@ namespace ChiStrikers
             {
                 bool sel = i == M.PauseIndex;
                 var r = new Rect(W * 0.5f - iw * 0.5f, y0 + i * (ih + 12 * s), iw, ih);
+                if (Clicked(r)) M.ClickPause(i);
                 Box(r, sel ? Yellow : Navy);
                 Text(r, items[i], 30, sel ? Navy : Color.white, TextAnchor.MiddleCenter, FontStyle.BoldAndItalic);
             }

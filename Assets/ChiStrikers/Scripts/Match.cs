@@ -191,7 +191,8 @@ namespace ChiStrikers
                     if (StateT > 3f) { Half = 2; Clock = HalfLength; BeginKickoff(Away); }
                     break;
                 case MatchState.FullTime:
-                    if (StateT > 1.5f && (P1.Confirm || P2.Confirm)) GoToTitle();
+                    if (StateT > 1.5f && (P1.Confirm || P2.Confirm || continueClick)) GoToTitle();
+                    continueClick = false;
                     break;
             }
 
@@ -270,7 +271,9 @@ namespace ChiStrikers
         void PauseInput()
         {
             int n = P1.NavY(); if (n != 0) { PauseIndex = (PauseIndex - n + 3) % 3; Sfx.Play(Sfx.Pass, 0.3f, 1.5f); }
-            if (P1.Confirm)
+            bool go = P1.Confirm || pauseClick;
+            pauseClick = false;
+            if (go)
             {
                 if (PauseIndex == 0) TogglePause();
                 else if (PauseIndex == 1) { Paused = false; Time.timeScale = 1; StopAllCoroutines(); Specials.Running = false; Cinematic = false; StartMode(Mode); }
@@ -278,11 +281,19 @@ namespace ChiStrikers
             }
         }
 
+        /// <summary>Mouse clicks on the menus come here (HUD).</summary>
+        public void ClickTitle(int i) { MenuIndex = i; titleClick = true; }
+        public void ClickPause(int i) { PauseIndex = i; pauseClick = true; }
+        public void ClickContinue() { continueClick = true; }
+        bool titleClick, pauseClick, continueClick;
+
         void TitleInput()
         {
-            if (ShowHelp) { if (P1.Confirm || P1.Back || Controls.PausePressed()) ShowHelp = false; return; }
+            if (ShowHelp) { if (P1.Confirm || P1.Back || Controls.PausePressed() || continueClick) ShowHelp = false; continueClick = false; return; }
             int n = P1.NavY(); if (n != 0) { MenuIndex = (MenuIndex - n + 4) % 4; Sfx.Play(Sfx.Pass, 0.3f, 1.5f); }
-            if (P1.Confirm)
+            bool go = P1.Confirm || P2.Confirm || titleClick;
+            titleClick = false;
+            if (go)
             {
                 Sfx.Play(Sfx.Chime, 0.6f);
                 StopAllCoroutines(); Specials.Running = false; Cinematic = false; Time.timeScale = 1;
